@@ -5,6 +5,7 @@ from langchain.agents import initialize_agent, AgentType
 import uuid
 from datetime import datetime, date, timedelta
 import time
+import os
 
 # Set page config
 st.set_page_config(
@@ -65,9 +66,86 @@ st.markdown("""
         border-left: 4px solid #17a2b8;
         margin: 1rem 0;
     }
+    .setup-info {
+        background-color: #fff3cd;
+        color: #856404;
+        padding: 1rem;
+        border-radius: 8px;
+        border-left: 4px solid #ffc107;
+        margin: 1rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
+def setup_environment():
+    """Setup environment variables and Composio integration."""
+    try:
+        # Check if secrets are available
+        if "GOOGLE_API_KEY" not in st.secrets:
+            st.error("❌ Google API Key not found in secrets. Please add it to your Streamlit secrets.")
+            st.markdown("""
+            <div class="setup-info">
+            <strong>Setup Instructions:</strong><br>
+            1. Go to your Streamlit app settings<br>
+            2. Add the following to your secrets.toml:<br>
+            <code>
+            GOOGLE_API_KEY = "your_google_api_key_here"<br>
+            COMPOSIO_API_KEY = "your_composio_api_key_here"<br>
+            TAVILY_API_KEY = "your_tavily_api_key_here"
+            </code>
+            </div>
+            """, unsafe_allow_html=True)
+            return False
+        
+        # Set environment variables from secrets
+        os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
+        
+        if "COMPOSIO_API_KEY" in st.secrets:
+            os.environ["COMPOSIO_API_KEY"] = st.secrets["COMPOSIO_API_KEY"]
+        
+        if "TAVILY_API_KEY" in st.secrets:
+            os.environ["TAVILY_API_KEY"] = st.secrets["TAVILY_API_KEY"]
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"❌ Error setting up environment: {str(e)}")
+        return False
+
+def initialize_composio_tools():
+    """Initialize Composio tools with automatic Tavily integration."""
+    try:
+        # Initialize Composio toolset
+        toolset = ComposioToolSet()
+        
+        # Try to get Tavily tools
+        tools = toolset.get_tools(apps=[App.TAVILY])
+        
+        if not tools:
+            st.warning("⚠️ Tavily tools not found. Attempting to connect Tavily...")
+            
+            # Try to add Tavily integration programmatically
+            try:
+                # This will attempt to connect Tavily using the API key from environment
+                toolset.add_tool(App.TAVILY)
+                tools = toolset.get_tools(apps=[App.TAVILY])
+                
+                if tools:
+                    st.success("✅ Tavily integration successful!")
+                else:
+                    st.error("❌ Failed to connect Tavily. Please check your API keys.")
+                    return []
+                    
+            except Exception as e:
+                st.error(f"❌ Failed to setup Tavily integration: {str(e)}")
+                st.info("💡 Make sure your Tavily API key is correctly set in secrets.")
+                return []
+        
+        return tools
+        
+    except Exception as e:
+        st.error(f"❌ Error initializing Composio tools: {str(e)}")
+        return []
 
 class TravelAgent:
     """Base class for a specialized travel agent."""
@@ -130,21 +208,20 @@ class TravelAgent:
         return response
 
 @st.cache_resource
-def initialize_agents(api_key):
-    """Initialize all travel agents with caching for performance."""
+def initialize_agents():
+    """Initialize all travel agents with automatic configuration."""
     try:
-        # Initialize Gemini LLM
-        llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", google_api_key=api_key)
+        # Initialize Gemini LLM using environment variable
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-2.0-flash", 
+            google_api_key=os.environ.get("GOOGLE_API_KEY")
+        )
 
-        # Initialize Composio toolset with Tavily
-        toolset = ComposioToolSet()
-        
-        # Get Tavily search tools from Composio
-        tools = toolset.get_tools(apps=[App.TAVILY])
+        # Initialize Composio tools
+        tools = initialize_composio_tools()
         
         if not tools:
-            st.warning("⚠️ No Tavily tools found! Make sure you're authenticated with Composio and Tavily is connected.")
-            tools = []
+            st.warning("⚠️ No search tools available. Some features may be limited.")
 
         # Define specialized agents with detailed roles and goals
         research_agent = TravelAgent(
@@ -227,43 +304,42 @@ def main():
     st.markdown('<h1 class="main-header">🌍 AI Travel Planner ✈️</h1>', unsafe_allow_html=True)
     st.markdown("Plan your perfect trip with AI-powered research and real-time information!")
 
-    # Sidebar for API configuration
+    # Setup environment
+    if not setup_environment():
+        return
+
+    # Sidebar for status and information
     with st.sidebar:
-        st.header("🔧 Configuration")
         
-        # API Key input
-        api_key = st.text_input(
-            "Google Gemini API Key", 
-            type="password", 
-            help="Enter your Google Gemini API key"
-        )
-        
-        if not api_key:
-            st.warning("Please enter your Gemini API key to continue.")
-            st.info("Get your API key from Google AI Studio: https://makersuite.google.com/app/apikey")
-            return
-        
-        st.success("✅ API Key configured!")
-        
-        # Setup instructions
-        with st.expander("📋 Setup Instructions"):
+        # Information
+        with st.expander("ℹ️ About This App"):
             st.markdown("""
-            **Required Setup:**
-            1. Install dependencies:
-               ```bash
-               pip install composio-langchain langchain-google-genai streamlit
-               ```
-            2. Authenticate with Composio:
-               ```bash
-               composio login
-               ```
-            3. Connect Tavily app in Composio dashboard
-            4. Enter your Gemini API key above
+            This AI Travel Planner uses:
+            - **Google Gemini** for AI reasoning
+            - **Composio** for tool orchestration
+            - **Tavily** for real-time web search
+            
+            **Features:**
+            - Real-time flight & hotel searches
+            - Current weather & visa info
+            - Local events & cultural insights
+            - Budget optimization
+            - Personalized itineraries
+            """)
+        
+        with st.expander("🚀 Quick Start"):
+            st.markdown("""
+            1. Fill in your trip details below
+            2. Click "Generate Travel Plan"
+            3. Get your personalized itinerary
+            4. Download your travel plan
+            
+            **No manual setup required!**
             """)
 
     # Initialize agents
     with st.spinner("🔄 Initializing AI agents..."):
-        agents = initialize_agents(api_key)
+        agents = initialize_agents()
     
     if not agents:
         st.error("Failed to initialize agents. Please check your configuration.")
@@ -281,7 +357,7 @@ def main():
     
     with col2:
         destination = st.text_input("🛬 Destination City", placeholder="e.g., Paris, France")
-        end_date = st.date_input("📅 End Date", min_value=date.today()+ timedelta(days=5))
+        end_date = st.date_input("📅 End Date", min_value=date.today() + timedelta(days=5))
         interests = st.text_input("🎯 Interests", placeholder="museums, food, hiking, beaches")
 
     # Validation
@@ -350,6 +426,7 @@ def main():
             
             budget_query = (
                 f"FRESH BUDGET SEARCH for {destination}: "
+                f"Consider the number of days from {start_date} to {end_date}.  "
                 f"Search for: 'hotel prices {destination} {start_date} 2025 current deals' "
                 f"Search for: 'restaurant costs {destination} 2025 budget dining' "
                 f"Search for: 'activity prices {destination} {interests} 2025 discounts' "
@@ -420,11 +497,11 @@ def main():
             
         except Exception as e:
             st.markdown(f'<div class="error-box">❌ Error generating travel plan: {str(e)}</div>', unsafe_allow_html=True)
-            st.info("💡 Make sure you have completed the setup requirements in the sidebar.")
+            st.info("💡 Please check that all API keys are correctly configured in your Streamlit secrets.")
 
     # Footer
     st.markdown("---")
-    st.markdown("🤖 Powered by AI agents with real-time search capabilities")
+    st.markdown("🤖 Powered by AI agents with real-time search capabilities | Auto-configured for instant use")
 
 if __name__ == "__main__":
     main()
